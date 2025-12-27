@@ -1,0 +1,408 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>VisionZero — Allegheny (2022–2024)</title>
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+
+<!-- Leaflet core -->
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+<!-- MarkerCluster (for performance) -->
+<link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css">
+<link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css">
+<script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
+
+<!-- Heatmap -->
+<script src="https://unpkg.com/leaflet.heat/dist/leaflet-heat.js"></script>
+
+<style>
+  :root{
+    --panel:#ffffff; --muted:#6b7280; --ink:#0b1020; --brand:#1f6feb;
+    --chip:#eef2ff; --b:#e5e7eb;
+  }
+  html,body{height:100%;margin:0;font:14px/1.45 system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;background:#f7f7fb;}
+  #app{display:grid;grid-template-columns:340px 1fr;height:100%}
+  #panel{background:var(--panel);padding:12px;border-right:1px solid var(--b);overflow:auto}
+  #map{height:100%}
+  h1{font-size:16px;margin:0 0 2px}
+  .sub{color:var(--muted);font-size:12px;margin-bottom:10px}
+  fieldset{border:1px solid var(--b);border-radius:10px;margin:10px 0;padding:10px}
+  fieldset>legend{padding:0 6px;color:#334155;font-weight:600}
+  .row{display:flex;gap:8px;flex-wrap:wrap}
+  .chip{background:var(--chip);border-radius:999px;padding:4px 8px;margin:2px 4px;display:inline-block;font-size:12px}
+  .btn{border:1px solid #d1d5db;background:#f9fafb;border-radius:8px;padding:8px 10px;cursor:pointer}
+  .btn.primary{background:var(--brand);color:#fff;border-color:var(--brand)}
+  .btn:disabled{opacity:.6;cursor:not-allowed}
+  .stack{display:flex;flex-direction:column;gap:8px}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  label{display:flex;gap:6px;align-items:center}
+  input[type="number"],input[type="range"]{width:100%}
+  .small{font-size:12px;color:#475569}
+  .swatch{width:14px;height:14px;border-radius:3px;border:1px solid rgba(0,0,0,.1);display:inline-block;margin-right:6px}
+  #summary{font-size:12px;color:#475569}
+  .switch{display:flex;gap:10px;align-items:center}
+  .inline-legend div{margin:2px 0}
+  @media (max-width: 900px){
+    #app{grid-template-columns:1fr; grid-template-rows: 48vh 52vh}
+    #panel{order:2}
+    #map{order:1}
+  }
+</style>
+</head>
+<body>
+<div id="app">
+  <aside id="panel">
+    <h1>VisionZero — Allegheny</h1>
+    <div class="sub">Crashes 2022–2024 (GeoJSON from Postgres). Click markers for details.</div>
+
+    <fieldset>
+      <legend>Filters</legend>
+      <div class="stack">
+
+        <div>
+          <div class="small">Years</div>
+          <div id="year-boxes" class="row"></div>
+        </div>
+
+        <div id="season-wrap">
+          <div class="small">Seasons</div>
+          <div id="season-boxes" class="row"></div>
+        </div>
+
+        <div id="dow-wrap">
+          <div class="small">Day of week</div>
+          <div id="dow-boxes" class="row"></div>
+        </div>
+
+        <div class="grid2">
+          <div>
+            <div class="small">Hour of day — from</div>
+            <input id="hourMin" type="range" min="0" max="23" value="0">
+          </div>
+          <div>
+            <div class="small">to</div>
+            <input id="hourMax" type="range" min="0" max="23" value="23">
+          </div>
+        </div>
+
+        <div>
+          <div class="small">Min severity rank (1 = Unknown … 9 = Killed)</div>
+          <input id="minRank" type="range" min="0" max="9" step="1" value="0">
+          <div class="small">Current: <span id="minRankVal">0</span></div>
+        </div>
+
+        <div>
+          <div class="small">Weather</div>
+          <div id="wx-boxes" class="row"></div>
+        </div>
+
+        <div>
+          <div class="small">Road condition</div>
+          <div id="rc-boxes" class="row"></div>
+        </div>
+
+        <div class="switch">
+          <label><input id="showMarkers" type="checkbox" checked> Show markers</label>
+          <label><input id="showHeat" type="checkbox" checked> Show heat map</label>
+        </div>
+
+        <div class="row">
+          <button id="apply" class="btn primary">Apply</button>
+          <button id="reset" class="btn">Reset</button>
+        </div>
+
+        <div id="summary">—</div>
+      </div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Legend (severity rank)</legend>
+      <div class="inline-legend small">
+        <div><span class="swatch" style="background:#ef4444"></span> 9 Killed</div>
+        <div><span class="swatch" style="background:#f97316"></span> 8 Serious injury</div>
+        <div><span class="swatch" style="background:#f59e0b"></span> 7 Minor injury</div>
+        <div><span class="swatch" style="background:#eab308"></span> 6 Possible injury</div>
+        <div><span class="swatch" style="background:#84cc16"></span> 5 —</div>
+        <div><span class="swatch" style="background:#22c55e"></span> 4 —</div>
+        <div><span class="swatch" style="background:#10b981"></span> 3 Not injured</div>
+        <div><span class="swatch" style="background:#60a5fa"></span> 2 Injury—unknown</div>
+        <div><span class="swatch" style="background:#93c5fd"></span> 1 Unknown if injured</div>
+      </div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Export</legend>
+      <button id="download" class="btn">Download filtered GeoJSON</button>
+    </fieldset>
+  </aside>
+
+  <main id="map"></main>
+</div>
+
+<script>
+/* ------------ dictionaries & helpers ------------ */
+const DOW = {1:"Sun",2:"Mon",3:"Tue",4:"Wed",5:"Thu",6:"Fri",7:"Sat"};
+function seasonFromMonth(m){
+  if([12,1,2].includes(m)) return "Winter";
+  if([3,4,5].includes(m))  return "Spring";
+  if([6,7,8].includes(m))  return "Summer";
+  return "Fall";
+}
+const WX_LABEL = {
+  "01":"Blowing sand/soil/dirt","02":"Blowing snow","03":"Clear","04":"Cloudy",
+  "05":"Fog/smog/smoke","06":"Freezing rain/drizzle","07":"Rain","08":"Severe crosswinds",
+  "09":"Sleet/hail","10":"Snow","98":"Other","99":"Unknown",
+  // tolerate 1..10 as well
+  "1":"Blowing sand/soil/dirt","2":"Blowing snow","3":"Clear","4":"Cloudy","5":"Fog/smog/smoke",
+  "6":"Freezing rain/drizzle","7":"Rain","8":"Severe crosswinds","9":"Sleet/hail","10":"Snow"
+};
+const RC_LABEL = {
+  "0":"Dry","1":"Wet","2":"Sand/mud/oil/gravel","3":"Snow covered","4":"Slush","5":"Ice",
+  "6":"Ice patches","7":"Standing/moving water","8":"Other","9":"Unknown"
+};
+
+function mkCheckbox(id, val, label, checked=true){
+  const span = document.createElement('span'); span.className='chip';
+  span.innerHTML = `<label><input type="checkbox" id="${id}-${val}" value="${val}" ${checked?'checked':''}> ${label}</label>`;
+  return span;
+}
+function uniqueSorted(arr){ return Array.from(new Set(arr)).sort((a,b)=> (a-b || (''+a).localeCompare(''+b))); }
+function checkedVals(prefix){
+  return Array.from(document.querySelectorAll(`input[id^="${prefix}-"]:checked`)).map(i=>i.value);
+}
+
+/* ------------ map + layers ------------ */
+const map = L.map('map',{center:[40.44,-79.99],zoom:9,preferCanvas:true});
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{
+  maxZoom: 19, attribution:'© OpenStreetMap'
+}).addTo(map);
+
+let crashCluster = L.markerClusterGroup({maxClusterRadius:50, disableClusteringAtZoom:17});
+let heatLayer = L.heatLayer([], {radius:22, blur:25, maxZoom:17, minOpacity:0.25});
+let centroidsGroup = L.layerGroup();
+
+const allFeatures = []; // raw GeoJSON features
+
+/* ------------ colors by Nancy rank ------------ */
+function colorForRank(r){
+  r = Number(r)||0;
+  const pal = { 9:'#ef4444', 8:'#f97316', 7:'#f59e0b', 6:'#eab308',
+                5:'#84cc16', 4:'#22c55e', 3:'#10b981', 2:'#60a5fa', 1:'#93c5fd', 0:'#cbd5e1' };
+  return pal[Math.max(0, Math.min(9, r))];
+}
+
+/* ------------ UI construction ------------ */
+function buildFilterUI(features){
+  // Years
+  const years = uniqueSorted(features.map(f=>+f.properties.crash_year).filter(Number.isFinite));
+  const ybox = document.getElementById('year-boxes'); ybox.innerHTML='';
+  years.forEach(y => ybox.appendChild(mkCheckbox('year', y, y)));
+
+  // Seasons
+  const sbox = document.getElementById('season-boxes'); sbox.innerHTML='';
+  ["Winter","Spring","Summer","Fall"].forEach(s => sbox.appendChild(mkCheckbox('season', s, s)));
+
+  // Day of week
+  const dbox = document.getElementById('dow-boxes'); dbox.innerHTML='';
+  [1,2,3,4,5,6,7].forEach(d => dbox.appendChild(mkCheckbox('dow', d, DOW[d])));
+
+  // Weather
+  const wxs = uniqueSorted(features.map(f => String(f.properties.weather ?? '')).filter(v=>v!==''));
+  const wbox = document.getElementById('wx-boxes'); wbox.innerHTML='';
+  wxs.forEach(w => {
+    const label = WX_LABEL[String(w)] || `Code ${w}`;
+    wbox.appendChild(mkCheckbox('wx', w, label));
+  });
+
+  // Road condition
+  const rcs = uniqueSorted(features.map(f => String(f.properties.road_condition ?? '')).filter(v=>v!==''));
+  const rcbox = document.getElementById('rc-boxes'); rcbox.innerHTML='';
+  rcs.forEach(r => rcbox.appendChild(mkCheckbox('rc', r, RC_LABEL[String(r)] || `Code ${r}`)));
+
+  // Live label for rank
+  const rank = document.getElementById('minRank');
+  rank.addEventListener('input', ()=> document.getElementById('minRankVal').textContent = rank.value);
+  document.getElementById('minRankVal').textContent = rank.value;
+
+  // Auto-apply on change
+  document.querySelectorAll('#panel input').forEach(el => el.addEventListener('change', applyFilters));
+}
+
+/* ------------ filtering logic ------------ */
+function passFilters(f){
+  const p = f.properties || {};
+  const years  = checkedVals('year').map(Number);
+  const seas   = checkedVals('season');
+  const dows   = checkedVals('dow').map(Number);
+  const wxs    = checkedVals('wx').map(String);
+  const rcs    = checkedVals('rc').map(String);
+  const hmin   = +document.getElementById('hourMin').value;
+  const hmax   = +document.getElementById('hourMax').value;
+  const minR   = +document.getElementById('minRank').value;
+
+  if (years.length && !years.includes(Number(p.crash_year))) return false;
+
+  if (seas.length){
+    const s = seasonFromMonth(Number(p.crash_month));
+    if (!seas.includes(s)) return false;
+  }
+
+  if (dows.length && !dows.includes(Number(p.day_of_week))) return false;
+
+  const hr = Number(p.hour_of_day);
+  if (Number.isFinite(hr) && (hr < hmin || hr > hmax)) return false;
+
+  if (Number(p.severity_rank || 0) < minR) return false;
+
+  if (wxs.length && !wxs.includes(String(p.weather))) return false;
+  if (rcs.length && !rcs.includes(String(p.road_condition))) return false;
+
+  return true;
+}
+
+/* ------------ layers refresh ------------ */
+function makeMarker(f){
+  const p = f.properties || {};
+  const [lng,lat] = f.geometry?.coordinates || [];
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+
+  const m = L.circleMarker([lat,lng],{
+    radius:5, weight:1, color:'#111', fillOpacity:.9,
+    fillColor: colorForRank(p.severity_rank)
+  });
+  const rows = [];
+  const push = (k,v)=> rows.push(`<div><strong>${k}:</strong> ${v}</div>`);
+  push('ID', p.id ?? '(n/a)');
+  push('Year', p.crash_year ?? '(n/a)');
+  if (p.crash_month != null) push('Month', p.crash_month);
+  if (p.day_of_week != null) push('Day', `${DOW[p.day_of_week]||p.day_of_week}`);
+  push('Hour', p.hour_of_day ?? '(n/a)');
+  push('Severity', `${p.severity_rank} — ${p.severity_label ?? ''}`);
+  if (p.weather != null) push('Weather', WX_LABEL[String(p.weather)] || p.weather);
+  if (p.road_condition != null) push('Road cond.', RC_LABEL[String(p.road_condition)] || p.road_condition);
+  m.bindPopup(rows.join(''));
+  // keep feature on marker for “export current view”
+  m.feature = f;
+  return m;
+}
+
+function refreshMarkers(features){
+  if (crashCluster) map.removeLayer(crashCluster);
+  crashCluster = L.markerClusterGroup({maxClusterRadius:50, disableClusteringAtZoom:17});
+  let added=0;
+  features.forEach(f => {
+    const m = makeMarker(f);
+    if (m) { crashCluster.addLayer(m); added++; }
+  });
+  if (document.getElementById('showMarkers').checked){
+    crashCluster.addTo(map);
+  }
+  return added;
+}
+
+function refreshHeat(features){
+  const pts = [];
+  features.forEach(f=>{
+    const [lng,lat] = f.geometry?.coordinates || [];
+    const w = Math.max(0.1, Number(f.properties?.severity_rank || 0) / 9); // 0.1..1
+    if (Number.isFinite(lat) && Number.isFinite(lng)) pts.push([lat,lng,w]);
+  });
+  if (heatLayer) map.removeLayer(heatLayer);
+  heatLayer = L.heatLayer(pts, {radius:22, blur:25, maxZoom:17, minOpacity:0.25});
+  if (document.getElementById('showHeat').checked){
+    heatLayer.addTo(map);
+  }
+}
+
+function applyFilters(){
+  const filtered = allFeatures.filter(passFilters);
+  const n = refreshMarkers(filtered);
+  refreshHeat(filtered);
+  updateSummary(filtered, n);
+}
+
+function resetFilters(){
+  document.querySelectorAll('#panel input[type="checkbox"]').forEach(cb=>cb.checked=true);
+  document.getElementById('hourMin').value = 0;
+  document.getElementById('hourMax').value = 23;
+  document.getElementById('minRank').value = 0;
+  document.getElementById('minRankVal').textContent = '0';
+  applyFilters();
+}
+
+function updateSummary(features, added){
+  const yrs = new Set(features.map(f=>f.properties?.crash_year).filter(v=>v!=null));
+  const hmin = +document.getElementById('hourMin').value;
+  const hmax = +document.getElementById('hourMax').value;
+  document.getElementById('summary').textContent =
+    `Showing ${features.length.toLocaleString()} of ${allFeatures.length.toLocaleString()} point(s) | years: ${Array.from(yrs).join(', ')} | hours: ${hmin}–${hmax}`;
+}
+
+/* ------------ export filtered ------------- */
+function downloadFiltered(){
+  const filtered = allFeatures.filter(passFilters);
+  const out = {
+    type:"FeatureCollection",
+    features: filtered.map(f=>({
+      type:"Feature",
+      geometry: f.geometry,
+      properties: f.properties
+    }))
+  };
+  const blob = new Blob([JSON.stringify(out)],{type:"application/geo+json"});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `vz_filtered_${Date.now()}.geojson`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+/* ------------ load data ------------ */
+async function loadCentroids(){
+  try{
+    const res = await fetch('cluster_centroids.geojson');
+    if (!res.ok) return;
+    const gj = await res.json();
+    L.geoJSON(gj,{
+      pointToLayer: (f, latlng)=>{
+        const n = f.properties?.n_points ?? 1;
+        const r = Math.max(6, Math.min(26, Math.sqrt(n)));
+        return L.circleMarker(latlng,{radius:r,color:'#111',weight:1,fillColor:'#374151',fillOpacity:.7})
+          .bindPopup(`<b>Cluster ${f.properties?.cluster ?? ''}</b><br>Points: ${n}<br>Avg risk: ${(f.properties?.avg_risk ?? 0).toFixed(2)}`);
+      }
+    }).addTo(centroidsGroup);
+    centroidsGroup.addTo(map);
+  }catch(e){ /* ignore */ }
+}
+
+async function loadCrashes(){
+  const res = await fetch('crashes_2022_2024.geojson');
+  if (!res.ok) throw new Error('Failed to load crashes_2022_2024.geojson');
+  const gj = await res.json();
+  const feats = Array.isArray(gj.features) ? gj.features : [];
+  allFeatures.length = 0;
+  feats.forEach(f => allFeatures.push(f));
+
+  buildFilterUI(allFeatures);
+  applyFilters();
+
+  // Fit bounds once
+  const b = L.geoJSON(gj).getBounds();
+  if (b.isValid()) map.fitBounds(b, {padding:[20,20]});
+}
+
+/* ------------ events ------------ */
+document.getElementById('apply').onclick = applyFilters;
+document.getElementById('reset').onclick = resetFilters;
+document.getElementById('download').onclick = downloadFiltered;
+document.getElementById('showMarkers').onchange = applyFilters;
+document.getElementById('showHeat').onchange = applyFilters;
+
+/* ------------ go ------------ */
+loadCrashes();
+loadCentroids();
+</script>
+</body>
+</html>
